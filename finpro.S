@@ -6,6 +6,9 @@
 ;------------------------
 .global main
 main:
+LDI   R16, 0xFF
+OUT   DDRC, R16
+SBI   DDRB, 4              ;pin PB4 o/p for servo control
 RCALL SPI_MAX7219_init
 RCALL MAX7219_disp_text
 RCALL DHT11_sensor
@@ -13,12 +16,10 @@ RCALL DHT11_sensor
 ;=================================================================
 DHT11_sensor:
 ;-----------------------------------------------------------------
-agn:RCALL delay_20ms      ;wait 2s for DHT11 to get ready   (CHANGE FROM 2S to 20ms)
+agn:RCALL delay_2s      ;wait 2s for DHT11 to get ready   (CHANGE FROM 2S to 20ms)
 ;-----------------------------------------------------------------
 ;start_signal
 ;------------
-    SBI   DDRB, 4       ; pin PD7 as o/p
-    SBI   PORTB, 4  
     SBI   DDRD, 7       ;pin PD7 as o/p
     CBI   PORTD, 7      ;first, send low pulse
     RCALL delay_20ms    ;for 20ms
@@ -38,6 +39,7 @@ w3: SBIC  PIND, 7
     MOV   R25, R24
     RCALL DHT11_reading
     RCALL DHT11_reading ;read temp (3rd byte of 40-bit data)
+    MOV   R31, R24      ; Put the data of temp in R31
 
 ;-----------------------------------------------------------------
 ;convert temp & humidity bytes to decimal & display on MAX7219
@@ -47,8 +49,6 @@ w3: SBIC  PIND, 7
     LDI   R30, 0x06
     ;-------------------
     RCALL binary2decimal  ;temp in decimal
-    MOV R31, R27   ;(PULUHAN)
-    MOV R23, R28   ;(SATUAN)
 
     ;-------------------
     MOV   R28, R25
@@ -57,7 +57,7 @@ w3: SBIC  PIND, 7
     ;-------------------
     RCALL binary2decimal  ;humidity in decimal
     ;-------------------
-    RCALL check_data      ;check the value of the temperature
+    RCALL check
     RJMP  agn           ;go back & get another sensor reading
 ;=================================================================
 DHT11_reading:
@@ -226,39 +226,40 @@ dsp:  MOV   R18, R27
       ;--------------------------------------------------------
       RET
 
-;=======================To Check Data==========================
-;=============And Compare============to Turn on the servo======
-check_data: CPI R31, 2                    ; Check the MSB to two
-            BRMI skip_servo_motor         ; Jump when (dozens < 2) and the servo will be turn off
-            BREQ  check_second_digit      ; jump to check_second_digit if equal to two
-            SBI DDRB, 4                   ; pin PB4 o/p for servo control 
-            RCALL turn_on_servo           ; turn on the servo
+check: CPI   R31, 0b00011001            ; Compare R31 to threshold data
+      ;Check the output
+       LDI  R16, 0x00
+       OUT  PORTC, R16
+       LDI  R16, 255
+       BRGE servo
+       RET
 
-check_second_digit: CPI R23, 5            ; Check the LSB to five
-                    BRMI skip_servo_motor ; Jump when (unit < 5) and the servo will be turn off
-                    RCALL turn_on_servo   ; Turn on the servo if equal or higher than 5
-
-;Servo will not turn on
-skip_servo_motor: RET
 
 ;---------------------------------------------------------------
-turn_on_servo:     
-    LDI   R25, 1          ;counter for LED control
+servo: LDI   R25, 1          ;counter for LED control
     LDI   R26, 8          ;counter for # of rotation pos
     LDI   ZL, lo8(rotate_pos)
     LDI   ZH, hi8(rotate_pos)
     RCALL l1
+    RET
     ;-----------------------------------------------------------
 l1: LPM   R24, Z+         ;load rotation pos
     RCALL rotate_servo    ;& rotate servo
     DEC   R26
     BRNE  l1              ;go back & get another rotate pos
     ;-----------------------------------------------------------
-    RJMP agn           ;go back & repeat
+       LDI  R16, 0xFE
+       OUT  PORTC, R16
+    DEC R16
+    CPI R16, 0x0
+    BREQ servo
+    RET
 
 rotate_pos:
 .byte 180, 90, 180, 90
 ;==============================================================
+
+;ERROR IN HERE
 rotate_servo:
 ;------------
     LDI   R20, 10         ;count to give enough cycles of PWM
