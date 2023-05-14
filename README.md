@@ -1,2 +1,0 @@
-# Automated-Greenhouse
-Lurem ipsum
