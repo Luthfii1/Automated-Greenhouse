@@ -5,11 +5,12 @@
 #include "avr/io.h"
 ;------------------------
 .global main
+
 main:
 RCALL SPI_MAX7219_init
-RCALL MAX7219_disp_text   
+RCALL MAX7219_disp_text
 agn: 
-RCALL DHT11_sensor     
+RCALL DHT11_sensor
 RCALL check 
 RJMP agn
 
@@ -42,16 +43,16 @@ w3: SBIC  PIND, 7
 ;-----------------------------------------------------------------
 ;convert temp & humidity bytes to decimal & display on MAX7219
 ;-------------------------------------------------------------
-    MOV   R28, R24        
-    MOV   R31, R24        ;menyimpan nilai suhu di R31 sebagai kondisi untu LED dan Servo
-    LDI   R29, 0x07       ;MSD temp akan didisplay pada digit 7
-    LDI   R30, 0x06       ;LSD temp akan didisplay pada digit 6
+    MOV   R28, R24      ;menyimpan nilai suhu di R28 untuk didisplay
+    MOV   R31, R24      ;menyimpan nilai suhu di R31 sebagai kondisi servo dan led
+    LDI   R29, 0x07       ;MSD temp akan didisplay pada digit 6
+    LDI   R30, 0x06       ;LSD temp akan didisplay pada digit 5
     ;-------------------
     RCALL binary2decimal  ;temp in decimal
     ;-------------------
     MOV   R28, R25
-    LDI   R29, 0x02       ;MSD temp akan didisplay pada digit 2
-    LDI   R30, 0x01       ;LSD temp akan didisplay pada digit 1
+    LDI   R29, 0x02       ;MSD humidity akan didisplay pada digit 1
+    LDI   R30, 0x01       ;LSD humidity akan didisplay pada digit 0
     ;-------------------
     RCALL binary2decimal  ;humidity in decimal
     RET                   ;kembali ke loop
@@ -59,18 +60,21 @@ w3: SBIC  PIND, 7
     ;COMPARE THE OUTPUT 
     ;-------------------
     check:
-    CPI   R31, 30         ;membandingkan R31 dengan 30
-    BRLO  skip_servo      ;jika suhu lebih kecil daripada 30, maka skip servo
-    CBI   PORTD, 5        ;mematikan LED
-    RCALL servo_motor     ;menjalankan Servo
-    skip_servo:       
-    CPI   R31, 20         ;membandingkan R31 dengan 20
-    BRGE  skip_led        ;jika suhu lebih besar daripada 30, maka skip led
-    SBI   PORTD, 5        ;menyalakan LED
-    RET                   ;kembali ke loop
+    CPI   R31, 30          ;membandingkan nilai suhu pada R31 dengan 30
+    BRLO  skip_servo       ;jika suhu lebih kecil daripada 30, maka skip servo
+    CBI   PORTD, 5         ;mematikan led
+    RCALL servo_motor      ;menjalankan servo
+
+    skip_servo:  
+    CBI   PORTD, 4         ;mematikan led
+    CPI   R31, 20          ;membandingkan nilai suhu R31 dengan 20
+    BRGE  skip_led         ;jika suhu lebih besar daripada 20, maka skip led
+    SBI   PORTD, 5         ;menyalakan led
+    RET                    ;kembali ke looping
+
     skip_led:
-    CBI   PORTD, 5        ;mematikan LED
-    RET                   ;kembali ke loop
+    CBI   PORTD, 5         ;mematikan led
+    RET                    ;kembali ke looping
 
 ;=================================================================
 DHT11_reading:
@@ -145,7 +149,7 @@ l2: IN    R20, TIFR0      ;get TIFR0 byte & check
 ;===============================================================
 SPI_MAX7219_init:
 ;----------------
-SBI   DDRD, 6       ;pin PD6 as o/p buzzer 
+SBI   DDRD, 4       ;pin PD4 as o/p buzzer 
 SBI   DDRD, 5       ;pin PD5 as o/p LED
 .equ  SCK, 5
 .equ  MOSI, 3
@@ -179,11 +183,11 @@ SBI   DDRD, 5       ;pin PD5 as o/p LED
 MAX7219_disp_text:
 ;-----------------
       LDI   R17, 0x08       ;select digit 7
-      LDI   R18, 0x0F       ;data = t
+      LDI   R18, 0x0F       ;data = t (defg) (00001111)
       RCALL send_bytes      ;send command & data to MAX7219
       ;--------------------------------------------------------
       LDI   R17, 0x05       ;select digit 4
-      LDI   R18, 0x4E       ;data = C
+      LDI   R18, 0x4E       ;data = C (adef) (01001110)
       RCALL send_bytes      ;send command & data to MAX7219
       ;--------------------------------------------------------
       LDI   R17, 0x04       ;select digit 3
@@ -191,7 +195,7 @@ MAX7219_disp_text:
       RCALL send_bytes      ;send command & data to MAX7219
       ;--------------------------------------------------------
       LDI   R17, 0x03       ;select digit 2
-      LDI   R18, 0x17       ;data = h
+      LDI   R18, 0x17       ;data = h (cefg) (00010111)
       RCALL send_bytes      ;send command & data to MAX7219
       ;--------------------------------------------------------
       RET
@@ -241,10 +245,15 @@ dsp:  MOV   R18, R27
       RET
 
 servo_motor:
-SBI   PORTD, 6    ;output buzzer
-LDI   R17, 0
-OUT   SPCR, R17       ;enable SPI as master, fsck=fosc/16
-SBI   DDRB, 4         ;pin PB4 o/p for servo control
+  CPI   R31, 40     ;membandingkan nilai suhu pada R31 dengan 40
+  BRLO  skip_buzzer ;jika suhu lebih kecil daripada 40, maka skip buzzer
+  SBI   PORTD, 4    ;menyalakan buzzer
+
+skip_buzzer:
+
+  LDI   R17, 0          
+  OUT   SPCR, R17       ;enable SPI as master, fsck=fosc/16
+  SBI   DDRB, 4         ;pin PB4 o/p for servo control
 ;---------------------------------------------------------------
 again_servo:     
     LDI   R26, 8          ;counter for # of rotation pos
@@ -298,7 +307,7 @@ ls3: IN    R21, TIFR0      ;get TIFR0 byte & check
     OUT   TIFR0, R21      ;clear OCF0 flag
     RET
 ;===============================================================
-delay_20ms_servo:               ;delay 20ms
+delay_20ms_servo:               ;delay 20ms (255*210*2*3/16000000) 
     LDI   R21, 255
 ls4: LDI   R22, 210
 ls5: LDI   R23, 2
@@ -310,7 +319,7 @@ ls6: DEC   R23
     BRNE  ls4
     RET
 ;===============================================================
-delay_ms:                 ;delay 0.5s
+delay_ms:                 ;delay 0.5s (255*255*41*3/16000000)
     LDI   R21, 255
 ls7 :LDI   R22, 255
 ls8 :LDI   R23, 41
