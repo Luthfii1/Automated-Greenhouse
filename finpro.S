@@ -3,9 +3,30 @@
 ;------------------------
 #define __SFR_OFFSET 0x00
 #include "avr/io.h"
+;=================CHANGE================
+;#include "avr/interrupt.h"
+;=================END CHANGE================
 ;------------------------
 .global main
+;=================CHANGE================
+;.org 0x0000
+;  rjmp main
+.org 0x0004
+;  jmp interupsi
+;.org 0x1000
+;=================END CHANGE================
+
 main:
+;=================CHANGE================
+;sbi DDRD, 6 ; Set PORTD4 as input with pull-up enabled (interrupt pin)
+;sbi PORTD, 6
+;ldi R16, (1 << ISC11); Configure ISC11 to trigger on falling edge
+;sts EICRA, R16
+;ldi R16, (1 << INT1) ; Enable INT1
+;STS EIMSK, R16
+;SEI; Enable global interrupts
+;=================END CHANGE================
+
 RCALL SPI_MAX7219_init
 RCALL MAX7219_disp_text
 agn: 
@@ -63,11 +84,14 @@ w3: SBIC  PIND, 7
     BRLO  skip_servo
     CBI   PORTD, 5
     RCALL servo_motor
+
     skip_servo:  
+    CBI   PORTD, 4
     CPI   R31, 20
     BRGE  skip_led
     SBI   PORTD, 5
     RET
+
     skip_led:
     CBI   PORTD, 5
     RET          ;go back & get another sensor reading
@@ -145,8 +169,8 @@ l2: IN    R20, TIFR0      ;get TIFR0 byte & check
 ;===============================================================
 SPI_MAX7219_init:
 ;----------------
-SBI   DDRD, 6       ;pin PD6 as o/p buzzer 
-SBI   DDRD, 5       ;pin PD6 as o/p LED
+SBI   DDRD, 4       ;pin PD4 as o/p buzzer 
+SBI   DDRD, 5       ;pin PD5 as o/p LED
 .equ  SCK, 5
 .equ  MOSI, 3
 .equ  SS, 2
@@ -241,10 +265,15 @@ dsp:  MOV   R18, R27
       RET
 
 servo_motor:
-SBI   PORTD, 6    ;output buzzer
-LDI   R17, 0
-OUT   SPCR, R17       ;enable SPI as master, fsck=fosc/16
-SBI   DDRB, 4         ;pin PB4 o/p for servo control
+  CPI   R31, 40
+  BRLO  skip_buzzer
+  SBI   PORTD, 4    ;output buzzer
+
+skip_buzzer:
+  LDI   R17, 0
+  OUT   SPCR, R17       ;enable SPI as master, fsck=fosc/16
+  SBI   DDRB, 4         ;pin PB4 o/p for servo control
+
 ;---------------------------------------------------------------
 again_servo:     
     LDI   R26, 8          ;counter for # of rotation pos
@@ -321,3 +350,10 @@ ls9 :DEC   R23
     DEC   R21
     BRNE  ls7
     RET
+
+;=================CHANGE================
+;interupsi: ; ini adalah subrutin yang dilakukan untuk mengaktifkan interrupt
+;  SBI PORTD, 4;Turn on buzzer
+;  sbi EIFR, INTF1 ;Clear INT1 Flag
+;  reti ;Return dari interrupt
+;=================END CHANGE================
