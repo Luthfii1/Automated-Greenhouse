@@ -7,12 +7,16 @@
 .global main
 main:
 RCALL SPI_MAX7219_init
-RCALL MAX7219_disp_text
-RCALL DHT11_sensor
+RCALL MAX7219_disp_text   
+agn: 
+RCALL DHT11_sensor     
+RCALL check 
+RJMP agn
+
 ;=================================================================
-DHT11_sensor:
+DHT11_sensor: 
 ;-----------------------------------------------------------------
-agn:RCALL delay_2s      ;wait 2s for DHT11 to get ready
+RCALL delay_2s      ;wait 2s for DHT11 to get ready
 ;-----------------------------------------------------------------
 ;start_signal
 ;------------
@@ -21,7 +25,7 @@ agn:RCALL delay_2s      ;wait 2s for DHT11 to get ready
     RCALL delay_20ms    ;for 20ms
     SBI   PORTD, 7      ;then send high pulse
 ;-----------------------------------------------------------------
-;responce signal
+;response signal
 ;---------------
     CBI   DDRD, 7       ;pin PD7 as i/p
 w1: SBIC  PIND, 7
@@ -38,19 +42,36 @@ w3: SBIC  PIND, 7
 ;-----------------------------------------------------------------
 ;convert temp & humidity bytes to decimal & display on MAX7219
 ;-------------------------------------------------------------
-    MOV   R28, R24
-    LDI   R29, 0x07
-    LDI   R30, 0x06
+    MOV   R28, R24        
+    MOV   R31, R24        ;menyimpan nilai suhu di R31 sebagai kondisi untu LED dan Servo
+    LDI   R29, 0x07       ;MSD temp akan didisplay pada digit 7
+    LDI   R30, 0x06       ;LSD temp akan didisplay pada digit 6
     ;-------------------
     RCALL binary2decimal  ;temp in decimal
     ;-------------------
     MOV   R28, R25
-    LDI   R29, 0x02
-    LDI   R30, 0x01
+    LDI   R29, 0x02       ;MSD temp akan didisplay pada digit 2
+    LDI   R30, 0x01       ;LSD temp akan didisplay pada digit 1
     ;-------------------
     RCALL binary2decimal  ;humidity in decimal
+    RET                   ;kembali ke loop
     ;-------------------
-    RJMP  agn           ;go back & get another sensor reading
+    ;COMPARE THE OUTPUT 
+    ;-------------------
+    check:
+    CPI   R31, 30         ;membandingkan R31 dengan 30
+    BRLO  skip_servo      ;jika suhu lebih kecil daripada 30, maka skip servo
+    CBI   PORTD, 5        ;mematikan LED
+    RCALL servo_motor     ;menjalankan Servo
+    skip_servo:       
+    CPI   R31, 20         ;membandingkan R31 dengan 20
+    BRGE  skip_led        ;jika suhu lebih besar daripada 30, maka skip led
+    SBI   PORTD, 5        ;menyalakan LED
+    RET                   ;kembali ke loop
+    skip_led:
+    CBI   PORTD, 5        ;mematikan LED
+    RET                   ;kembali ke loop
+
 ;=================================================================
 DHT11_reading:
     LDI   R16, 8        ;set counter for receiving 8 bits
@@ -124,6 +145,8 @@ l2: IN    R20, TIFR0      ;get TIFR0 byte & check
 ;===============================================================
 SPI_MAX7219_init:
 ;----------------
+SBI   DDRD, 6       ;pin PD6 as o/p buzzer 
+SBI   DDRD, 5       ;pin PD5 as o/p LED
 .equ  SCK, 5
 .equ  MOSI, 3
 .equ  SS, 2
@@ -131,7 +154,8 @@ SPI_MAX7219_init:
       LDI   R17, (1<<MOSI)|(1<<SCK)|(1<<SS)
       OUT   DDRB, R17       ;set MOSI, SCK, SS as o/p
       ;--------------------------------------------------------
-      LDI   R17, (1<<SPE)|(1<<MSTR)|(1<<SPR0)
+      
+      LDI   R17, (1<<SPIE)|(1<<SPE)|(1<<MSTR)|(1<<SPR0)
       OUT   SPCR, R17       ;enable SPI as master, fsck=fosc/16
       ;--------------------------------------------------------
       LDI   R17, 0x0A       ;set segment intensity (0 to 15)
@@ -215,3 +239,85 @@ dsp:  MOV   R18, R27
       RCALL send_bytes      ;send command & data to MAX7219    
       ;--------------------------------------------------------
       RET
+
+servo_motor:
+SBI   PORTD, 6    ;output buzzer
+LDI   R17, 0
+OUT   SPCR, R17       ;enable SPI as master, fsck=fosc/16
+SBI   DDRB, 4         ;pin PB4 o/p for servo control
+;---------------------------------------------------------------
+again_servo:     
+    LDI   R26, 8          ;counter for # of rotation pos
+    LDI   ZL, lo8(rotate_pos)
+    LDI   ZH, hi8(rotate_pos)
+    ;-----------------------------------------------------------
+ls1: LPM   R24, Z+         ;load rotation pos
+    RCALL rotate_servo    ;& rotate servo
+    DEC   R26
+    BRNE  ls1              ;go back & get another rotate pos
+    ;-----------------------------------------------------------
+    RJMP SPI_MAX7219_init           ;go back & repeat
+;---------------------------------------------------------------
+rotate_pos:
+.byte 40,70,90,110,180,110,90,70
+;===============================================================
+rotate_servo:
+;------------
+    LDI   R20, 10         ;count to give enough cycles of PWM
+    SBI DDRB, 1
+ls2: SBI   PORTB, 4
+    RCALL delay_timer0_servo
+    CBI   PORTB, 4        ;send msec pulse to rotate servo
+    RCALL delay_20ms_servo      ;wait 20ms before re-sending pulse
+    DEC   R20
+    BRNE  ls2              ;go back & repeat PWM signal
+    ;-----------------------------------------------------------
+bak:RCALL delay_ms        ;0.5s delay
+    RET                   ;& return to main subroutine
+;-------------------
+;===============================================================
+;delay subroutines
+;===============================================================
+delay_timer0_servo:             ;delay via Timer0
+    ;-----------------------------------------------------------
+    CLR   R21
+    OUT   TCNT0, R21      ;initialize timer0 with count=0
+    MOV   R21, R24
+    OUT   OCR0A, R21
+    LDI   R21, 0b00001100
+    OUT   TCCR0B, R21     ;timer0: CTC mode, prescaler 256
+    ;-----------------------------------------------------------
+ls3: IN    R21, TIFR0      ;get TIFR0 byte & check
+    SBRS  R21, OCF0A      ;if OCF0=1, skip next instruction
+    RJMP  ls3              ;else, loop back & check OCF0 flag
+    ;-----------------------------------------------------------
+    CLR   R21
+    OUT   TCCR0B, R21     ;stop timer0
+    ;-----------------------------------------------------------
+    LDI   R21, (1<<OCF0A)
+    OUT   TIFR0, R21      ;clear OCF0 flag
+    RET
+;===============================================================
+delay_20ms_servo:               ;delay 20ms
+    LDI   R21, 255
+ls4: LDI   R22, 210
+ls5: LDI   R23, 2
+ls6: DEC   R23
+    BRNE  ls6
+    DEC   R22
+    BRNE  ls5
+    DEC   R21
+    BRNE  ls4
+    RET
+;===============================================================
+delay_ms:                 ;delay 0.5s
+    LDI   R21, 255
+ls7 :LDI   R22, 255
+ls8 :LDI   R23, 41
+ls9 :DEC   R23
+    BRNE  ls9
+    DEC   R22
+    BRNE  ls8
+    DEC   R21
+    BRNE  ls7
+    RET
